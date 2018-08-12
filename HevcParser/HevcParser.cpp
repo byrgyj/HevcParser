@@ -251,7 +251,7 @@ static uint32_t getNumRpsCurrTempList(Slice_t *pSlice)
 
 static void parse_vps(VPS_t *pVPS)
 {
-  /*  uint32_t    vps_video_parameter_set_id;
+    uint32_t    vps_video_parameter_set_id;
     uint32_t    vps_reserved_three_2bits;
     uint8_t     vps_max_layers_minus1;
     uint32_t    vps_max_sub_layers_minus1;
@@ -292,7 +292,7 @@ static void parse_vps(VPS_t *pVPS)
     vps_max_layer_id            = READ_CODE(6, "vps_max_layer_id");
     vps_num_layer_sets_minus1   = READ_UVLC("vps_num_layer_sets_minus1");
 
-    bool layer_id_included_flag[vps_num_layer_sets_minus1 + 1][vps_max_layer_id + 1];
+    bool (*layer_id_included_flag)[6 + 1] = new bool[vps_num_layer_sets_minus1 + 1][6 + 1];
 
     for (i = 1; i <= vps_num_layer_sets_minus1; i++)
     {
@@ -325,8 +325,8 @@ static void parse_vps(VPS_t *pVPS)
 
         vps_num_hrd_parameters = READ_UVLC("vps_num_hrd_parameters");
 
-        uint32_t hrd_layer_set_idx[vps_num_hrd_parameters];
-        bool     cprms_present_flag[vps_num_hrd_parameters];
+        uint32_t *hrd_layer_set_idx = new uint32_t[vps_num_hrd_parameters];
+        bool     *cprms_present_flag = new bool[vps_num_hrd_parameters];
 
         for (i = 0; i < vps_num_hrd_parameters; i++)
         {
@@ -357,7 +357,7 @@ static void parse_vps(VPS_t *pVPS)
 
 
     pVPS->m_VPSId = vps_video_parameter_set_id;
-    */
+   
 }
 
 static void parse_sps(void)
@@ -929,7 +929,7 @@ static void parse_slice_hdr(int nal_unit_type)
                 slice.m_pcRPS   = &slice.m_LocalRPS;
                 rps             = slice.m_pcRPS;
                 
-                parse_short_term_ref_pic_set(p_sps, rps, p_sps->m_RPSList.m_numberOfReferencePictureSets);
+                //parse_short_term_ref_pic_set(p_sps, rps, p_sps->m_RPSList.m_numberOfReferencePictureSets);
             }
             else if (p_sps->m_RPSList.m_numberOfReferencePictureSets > 1)
             {
@@ -1761,7 +1761,7 @@ bool fill_es_buffer
 (
     uint8_t *pu8NalAddr,
     uint32_t u32NalSize,
-    int fd
+    FILE *file
 )
 {
     //ssize_t rd_sz;
@@ -1769,7 +1769,8 @@ bool fill_es_buffer
     
     memmove(u8EsBuffer, pu8NalAddr, u32NalSize);
 
-    rd_sz = read(fd, &u8EsBuffer[u32NalSize], ES_BUFFER_SIZE - u32NalSize);
+    //rd_sz = read(fd, &u8EsBuffer[u32NalSize], ES_BUFFER_SIZE - u32NalSize);
+    rd_sz = fread(&u8EsBuffer[u32NalSize], 1, ES_BUFFER_SIZE - u32NalSize, file);
     if (rd_sz == 0) // EOF
     {
         return false;
@@ -1792,7 +1793,7 @@ bool fill_es_buffer
 
 int main(int argc, const char * argv[])
 {
-    int fd;
+    FILE *file = NULL;
     size_t rd_sz;
         
     if (argc < 2)
@@ -1802,9 +1803,8 @@ int main(int argc, const char * argv[])
         return -1;
     }
 
-
-    fd = open(argv[1], O_RDONLY);
-    if (fd < 0)
+    file = fopen(argv[1], "rb");
+    if (file == NULL)
     {
         perror(argv[1]);
         exit(-1);
@@ -1821,24 +1821,14 @@ int main(int argc, const char * argv[])
     uint32_t    offset = 0;
     uint32_t    prefix_len = 0;
 
-    fill_es_buffer(u8EsBuffer, 0, fd);
+    fill_es_buffer(u8EsBuffer, 0, file);
     
     while (1)
     {        
-        if (!scan_nal
-             (
-                ptr,
-                nal_unit_header,
-                &nal_len,
-                &prefix_len
-             )
-           )
-        {
+        if (!scan_nal(ptr, nal_unit_header,  &nal_len, &prefix_len )) {
             // fill buffer
-            printf("fill buffer!\n");
-            
-            if (!fill_es_buffer(ptr, nal_len, fd))
-            {
+            printf("fill buffer!\n"); 
+            if (!fill_es_buffer(ptr, nal_len, file)){
                 printf("No more data to read!\n");
                 break;
             }
@@ -1848,21 +1838,17 @@ int main(int argc, const char * argv[])
             offset = 0;
 
             // try scan NAL again!
-            bool rescan = scan_nal
-             (
-                ptr,
-                nal_unit_header,
-                &nal_len,
-                &prefix_len
-             );
-
+            bool rescan = scan_nal( ptr, nal_unit_header,   &nal_len,  &prefix_len );
             printf("Try rescan NAL=%s\n", rescan ? "T" : "F");
         }
 
         printf("offset=%ld\n", ptr - u8EsBuffer);
 
         nal_unit_type           = (nal_unit_header[0] & (BIT6 | BIT5 | BIT4 | BIT3 | BIT2 | BIT1)) >> 1;
-        
+        // VPS = 0x40 = 32
+        // SPS = 0x42 = 33
+        // PPS = 0x44 = 34
+        // IDR = 39
         forbidden_zero_bit      = (nal_unit_header[0] & BIT7) >> 7;
         nuh_layer_id            = (nal_unit_header[0] & BIT0) << 5 | (nal_unit_header[1] & (BIT7 | BIT6 | BIT5 | BIT4 | BIT3)) >> 3;
         nuh_temporal_id_plus1   = nal_unit_header[1] & (BIT2 | BIT1 | BIT0);
@@ -1955,5 +1941,6 @@ int main(int argc, const char * argv[])
 
     fprintf(stderr, frameInfo);
     
+    system("pause");
     return 0;
 }
